@@ -13,182 +13,224 @@ struct TimerView: View
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: \Goal.createdAt, order: .forward) private var goals: [Goal]
-    @Query(sort: \Topic.name) private var topics: [Topic]
 
     @Bindable var timer: Timer
 
+    /// Topic que viene desde TopicDetailView
+    let preselectedTopic: Topic
+
     @State private var selectedTopic: Topic? = nil
-    @State private var isPresentingTopicSheet: Bool = false
-    @State private var draftSelectedTopic: Topic? = nil
     @State private var sessionStartDate: Date? = nil
+    @State private var didAutoConfigureFromPreselection = false
+
+    init(timer: Timer, preselectedTopic: Topic)
+    {
+        self._timer = Bindable(wrappedValue: timer)
+        self.preselectedTopic = preselectedTopic
+    }
 
     var body: some View
     {
-        GeometryReader
-        { geo in
+        GeometryReader { geo in
+            let dialSize = min(geo.size.width, geo.size.height) * 0.82
 
-            VStack
+            VStack(spacing: 28)
             {
-                Spacer()
+                topicHeader
+
+                Divider()
+                    .opacity(0.15)
 
                 Group
                 {
                     let t = timer.displayTime()
 
                     TimerDialView(time: t)
-                        .frame(width: min(geo.size.width, geo.size.height) * 0.9)
+                        .frame(width: dialSize, height: dialSize)
+                        .padding(.top, 4)
 
                     Text(timer.formatted(t))
                         .font(.system(size: 40, weight: .medium, design: .monospaced))
-                        .padding(.top, 12)
+                        .padding(.top, 8)
                 }
-                
-                // Settings-style row to select a Topic (like "When Timer Ends >")
-                Button
-                {
-                    draftSelectedTopic = selectedTopic
-                    isPresentingTopicSheet = true
-                }
-                label:
-                {
-                    HStack(spacing: 12)
-                    {
-                        Text(selectedTopic?.name ?? "Select topic")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
 
-                        Spacer()
+                Spacer(minLength: 16)
 
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color(.secondarySystemBackground))
-                    )
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 32)
-                .padding(.vertical, 32)
-                
-                Spacer()
-
-                HStack
-                {
-                    
-                    // Done button: marks the session done for the topic
-                    let doneEnabled = timer.elapsed > 0 && selectedTopic != nil
-                    
-                    Button
-                    {
-                        if let topic = selectedTopic
-                        {
-                            timer.done(for: topic)
-                            createAndPersistSession(for: topic)
-                            selectedTopic = nil
-                            sessionStartDate = nil
-                        }
-                    }
-                    label:
-                    {
-                        Circle()
-                            .fill(doneEnabled ? Color("EmeraldGreen") : Color(.secondarySystemFill))
-                            .frame(width: 96, height: 96)
-                            .overlay(
-                                Text("Done")
-                                    .font(.title3.weight(.semibold))
-                                    .foregroundStyle(doneEnabled ? Color.white : Color.secondary)
-                            )
-                    }
-                    .disabled(!doneEnabled)
-
-                    Spacer()
-                    
-                    // Start/Pause/Resume button: toggles the timer running state
-                    let startEnabled = selectedTopic != nil
-                    Button
-                    {
-                        createStartDateForSession()
-                        timer.toggle()
-                    }
-                    label:
-                    {
-                        Circle()
-                            .fill(!startEnabled ? Color(.secondarySystemFill) : (timer.isRunning ? Color.accentColor : Color("EmeraldGreen")))
-                            .frame(width: 96, height: 96)
-                            .overlay(
-                                Text(timer.isRunning ? "Pause" : (timer.elapsed == 0 ? "Start" : "Resume"))
-                                    .font(.title3.weight(.semibold))
-                                    .foregroundStyle(!startEnabled ? Color.secondary : Color.white)
-                            )
-                    }
-                    .disabled(!startEnabled)
-                }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 32)
-                
-                Spacer()
+                controlButtons
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .background(Color(.systemBackground).ignoresSafeArea())
         }
-        .sheet(isPresented: $isPresentingTopicSheet)
+        .onAppear
         {
-            NavigationStack
-            {
-                List
-                {
-                    ForEach(topics)
-                    { topic in
-                        HStack
-                        {
-                            Text(topic.name)
-                            Spacer()
-                            if draftSelectedTopic?.persistentModelID == topic.persistentModelID
-                            {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.tint)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture
-                        {
-                            draftSelectedTopic = topic
-                        }
-                    }
-                }
-                .listStyle(.insetGrouped)
-                .navigationTitle("Select Topic")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar
-                {
-                    ToolbarItem(placement: .cancellationAction)
-                    {
-                        Button
-                        {
-                            isPresentingTopicSheet = false
-                        }
-                        label:
-                        {
-                            Image(systemName: "xmark")
-                        }
-                    }
-                    ToolbarItem(placement: .confirmationAction)
-                    {
-                        Button("Set")
-                        {
-                            selectedTopic = draftSelectedTopic
-                            isPresentingTopicSheet = false
-                        }
-                        .disabled(draftSelectedTopic == nil)
-                    }
-                }
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            guard !didAutoConfigureFromPreselection else { return }
+
+            if selectedTopic == nil {
+                selectedTopic = preselectedTopic
             }
-            .presentationDetents([.medium, .large])
+
+            if !timer.isRunning && timer.elapsed == 0
+            {
+                createStartDateForSession()
+                timer.toggle()
+            }
+
+            didAutoConfigureFromPreselection = true
         }
+    }
+}
+
+private extension TimerView
+{
+    var topicHeader: some View
+    {
+        HStack(spacing: 14)
+        {
+            ZStack
+            {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(brandGradient)
+
+                Image(systemName: "book.closed.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 4)
+            {
+                Text("Focus on")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(preselectedTopic.name)
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(1)
+
+                Text("This session will be tracked for this topic")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    var controlButtons: some View
+    {
+        HStack
+        {
+            let doneEnabled = timer.elapsed > 0 && selectedTopic != nil
+            let startEnabled = selectedTopic != nil
+
+            Button
+            {
+                if let topic = selectedTopic
+                {
+                    timer.done(for: topic)
+                    createAndPersistSession(for: topic)
+                    selectedTopic = nil
+                    sessionStartDate = nil
+                }
+            }
+            label:
+            {
+                Circle()
+                    .fill(doneEnabled
+                          ? AnyShapeStyle(successGradient)
+                          : AnyShapeStyle(Color(.secondarySystemFill)))
+                    .frame(width: 96, height: 96)
+                    .shadow(color: doneEnabled ? successShadow : .clear,
+                            radius: 16, x: 0, y: 8)
+                    .overlay(
+                        Text("Done")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(doneEnabled ? Color.white : Color.secondary)
+                    )
+            }
+            .disabled(!doneEnabled)
+
+            Spacer()
+
+            Button
+            {
+                createStartDateForSession()
+                timer.toggle()
+            }
+            label:
+            {
+                let running = timer.isRunning
+
+                Circle()
+                    .fill(
+                        !startEnabled
+                        ? AnyShapeStyle(Color(.secondarySystemFill))
+                        : (running
+                           ? AnyShapeStyle(brandGradient)
+                           : AnyShapeStyle(successGradient))
+                    )
+                    .frame(width: 96, height: 96)
+                    .shadow(color: startEnabled ? brandShadow : .clear,
+                            radius: 16, x: 0, y: 8)
+                    .overlay(
+                        Text(running ? "Pause"
+                                     : (timer.elapsed == 0 ? "Start" : "Resume"))
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(startEnabled ? Color.white : Color.secondary)
+                    )
+            }
+            .disabled(!startEnabled)
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 32)
+    }
+}
+
+private extension TimerView
+{
+    var brandGradient: LinearGradient
+    {
+        LinearGradient(
+            colors: [
+                Color(red: 63/255, green: 167/255, blue: 214/255), // #3FA7D6
+                Color(red: 29/255, green: 53/255,  blue: 87/255)   // #1D3557
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    var successGradient: LinearGradient
+    {
+        LinearGradient(
+            colors: [
+                Color(red: 0.04, green: 0.65, blue: 0.45),
+                Color(red: 0.16, green: 0.80, blue: 0.60)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    var brandShadow: Color
+    {
+        Color.black.opacity(0.25)
+    }
+
+    var successShadow: Color
+    {
+        Color.black.opacity(0.25)
     }
 }
 
@@ -248,14 +290,14 @@ extension TimerView
 
 #Preview("Dark")
 {
-    TimerView(timer: Timer())
+    TimerView(timer: Timer(), preselectedTopic: SampleData.shared.topic)
         .modelContainer(SampleData.shared.modelContainer)
         .preferredColorScheme(.dark)
 }
 
 #Preview("Light")
 {
-    TimerView(timer: Timer())
+    TimerView(timer: Timer(), preselectedTopic: SampleData.shared.topic)
         .modelContainer(SampleData.shared.modelContainer)
         .preferredColorScheme(.light)
 }
